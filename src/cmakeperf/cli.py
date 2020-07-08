@@ -103,6 +103,7 @@ def main(compile_db, output, filter, interval, jobs):
               rp = os.path.relpath(file, os.getcwd())
               perc = (idx+1) / len(futures) * 100
               progout.write(f"[{idx+1}/{len(futures)}, {perc:.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
+              progout.flush()
       finally:
         if outstr != sys.stdout:
           outstr.close()
