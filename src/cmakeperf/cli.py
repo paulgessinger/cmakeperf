@@ -58,9 +58,9 @@ def main(compile_db, output, filter, interval):
       max_mem = 0
       start = datetime.now()
 
-      while p.status() == "running":
-        #  print("{1:%H:%M:%S} - {0:6>.2f}s - {2:>8.2f}MB - {3:>6.2f}% CPU".format(t, *samples[-1]))
+      while p.status() in (psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING):
         mem = 0
+        children = list(p.children(recursive=True))
         for subp in p.children(recursive=True):
           try:
             mem += subp.memory_info().rss
@@ -74,6 +74,7 @@ def main(compile_db, output, filter, interval):
         delta = datetime.now() - start
         sys.stderr.write(f"{rp}: {mem/1e6:8.2f}M, max: {max_mem/1e6:8.2f}M [{delta.total_seconds():8.2f}s]\r")
         time.sleep(interval)
+
       p.wait()
       sys.stderr.write("\n")
 
