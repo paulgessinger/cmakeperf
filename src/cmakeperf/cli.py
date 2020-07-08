@@ -16,7 +16,7 @@ import click
 import psutil
 
 
-def run(command, file, directory, interval, progress):
+def run(command, file, directory, interval, progress, progout):
   rp = os.path.relpath(file, os.getcwd())
   
 
@@ -27,7 +27,6 @@ def run(command, file, directory, interval, progress):
 
   while p.status() in (psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING):
     mem = 0
-    children = list(p.children(recursive=True))
     for subp in p.children(recursive=True):
       try:
         mem += subp.memory_info().rss
@@ -40,12 +39,13 @@ def run(command, file, directory, interval, progress):
 
     delta = datetime.now() - start
     if progress:
-      sys.stderr.write(f"{rp}: {mem/1e6:8.2f}M, max: {max_mem/1e6:8.2f}M [{delta.total_seconds():8.2f}s]\r")
+      progout.write(f"[{mem/1e6:8.2f}M, max: {max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\r")
+      progout.flush()
     time.sleep(interval)
 
   p.wait()
   if progress:
-    sys.stderr.write("\n")
+    progout.write("\n")
 
   delta = datetime.now() - start
   return file, max_mem, delta
@@ -67,10 +67,12 @@ def main(compile_db, output, filter, interval, jobs):
     commands = json.load(fh)
 
   outstr = io.StringIO()
+  progout = sys.stdout
 
   if output == "-":
     if not sys.stdout.isatty():
       outstr = sys.stdout
+      progout = sys.stderr
   else:
     outstr = open(output, "w")
     print("I will write output to", output)
@@ -90,16 +92,17 @@ def main(compile_db, output, filter, interval, jobs):
         if not regex.match(file):
           continue
   
-        futures.append(ex.submit(run, command, file, directory, interval, jobs==1))
+        futures.append(ex.submit(run, command, file, directory, interval, jobs==1, progout))
   
       try:
-        for f in as_completed(futures):
+        for idx, f in enumerate(as_completed(futures)):
             file, max_mem, delta = f.result()
             writer.writerow([file, max_mem, delta.total_seconds()])
             outstr.flush()
             if jobs > 1:
               rp = os.path.relpath(file, os.getcwd())
-              sys.stderr.write(f"{rp}: max: {max_mem/1e6:8.2f}M [{delta.total_seconds():8.2f}s]\n")
+              perc = (idx+1) / len(futures) * 100
+              progout.write(f"[{idx+1}/{len(futures)}, {perc:.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
       finally:
         if outstr != sys.stdout:
           outstr.close()
