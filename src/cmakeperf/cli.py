@@ -14,6 +14,8 @@ import threading
 
 import click
 import psutil
+import pandas as pd
+from tabulate import tabulate
 
 
 def run(command, file, directory, interval, progress, progout):
@@ -51,14 +53,18 @@ def run(command, file, directory, interval, progress, progout):
   return file, max_mem, delta
 
 
+@click.group()
+def main():
+    pass
 
-@click.command()
-@click.argument("compile_db")
+
+@main.command()
+@click.argument("compile_db", type=click.Path(dir_okay=False, exists=True))
 @click.option("--output", "-o", default="-", help="Output CSV to file, or stdout (use -)")
 @click.option("--filter", default=".*", help="Filter input files by regex")
 @click.option("--interval", type=float, default=0.5, help="Sample interval")
 @click.option("--jobs", "-j", type=int, default=1)
-def main(compile_db, output, filter, interval, jobs):
+def collect(compile_db, output, filter, interval, jobs):
 
   regex = re.compile(filter)
   cwd = os.getcwd()
@@ -97,13 +103,13 @@ def main(compile_db, output, filter, interval, jobs):
       try:
         for idx, f in enumerate(as_completed(futures)):
             file, max_mem, delta = f.result()
-            writer.writerow([file, max_mem, delta.total_seconds()])
+            rp = os.path.relpath(file, os.getcwd())
+            writer.writerow([rp, max_mem, delta.total_seconds()])
             outstr.flush()
             if jobs > 1:
-              rp = os.path.relpath(file, os.getcwd())
               perc = (idx+1) / len(futures) * 100
               cur = str(idx+1).rjust(math.ceil(math.log10(len(futures))))
-              progout.write(f"[{cur}/{len(futures)}, {perc:.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
+              progout.write(f"[{cur}/{len(futures)}, {perc:5.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
               progout.flush()
       finally:
         if outstr != sys.stdout:
@@ -114,6 +120,17 @@ def main(compile_db, output, filter, interval, jobs):
           f.cancel()
       ex.shutdown()
 
+@main.command("print")
+@click.argument("data_file", type=click.Path(dir_okay=False, exists=True))
+def fn_print(data_file):
+  df = pd.read_csv(data_file)
+  df.max_rss /= 1e6
+  mem = df.sort_values(by="max_rss", ascending=False)
+  time = df.sort_values(by="time", ascending=False)
+
+  print(tabulate([r for _, r in mem.head(10).iterrows()], headers=("file", "max_rss [M]", "time [s]"), floatfmt=("", ".2f", ".2f")))
+  print()
+  print(tabulate([r for _, r in time.head(10).iterrows()], headers=("file", "max_rss [M]", "time [s]"), floatfmt=("", ".2f", ".2f")))
 
 if "__main__" == __name__:
   main()
