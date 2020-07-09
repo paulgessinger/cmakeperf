@@ -18,9 +18,8 @@ import pandas as pd
 from tabulate import tabulate
 
 
-def run(command, file, directory, interval, progress, progout):
+def run(command, file, directory, interval, progress, progout, post_clean):
   rp = os.path.relpath(file, os.getcwd())
-  
 
   p = psutil.Popen(command, shell=True, cwd=directory, stdout=sp.PIPE, stderr=sp.STDOUT)
 
@@ -46,8 +45,16 @@ def run(command, file, directory, interval, progress, progout):
     time.sleep(interval)
 
   p.wait()
+
+
   if progress:
     progout.write("\n")
+
+  if post_clean:
+    m = re.search(r"-o ?([\w\/\.]*)", command)
+    assert m is not None, "Could not extract output"
+    output = os.path.join(directory, m.group(1))
+    os.remove(output)
 
   delta = datetime.now() - start
   return file, max_mem, delta
@@ -64,7 +71,8 @@ def main():
 @click.option("--filter", default=".*", help="Filter input files by regex")
 @click.option("--interval", type=float, default=0.5, help="Sample interval")
 @click.option("--jobs", "-j", type=int, default=1)
-def collect(compile_db, output, filter, interval, jobs):
+@click.option("--post-clean/--no-post-clean")
+def collect(compile_db, output, filter, interval, jobs, post_clean):
 
   regex = re.compile(filter)
   cwd = os.getcwd()
@@ -87,38 +95,39 @@ def collect(compile_db, output, filter, interval, jobs):
   writer.writerow(["file", "max_rss", "time"])
   outstr.flush()
     
-  with ThreadPoolExecutor(jobs) as ex:
-    futures = []
-    try:
-      for item in commands:
-        command = item["command"]
-        file = item["file"]
-        directory = item["directory"]
-
-        if not regex.match(file):
-          continue
-  
-        futures.append(ex.submit(run, command, file, directory, interval, jobs==1, progout))
-  
+  try:
+    with ThreadPoolExecutor(jobs) as ex:
+      futures = []
       try:
+        for item in commands:
+          command = item["command"]
+          file = item["file"]
+          directory = item["directory"]
+
+          if not regex.match(file):
+            continue
+  
+          futures.append(ex.submit(run, command, file, directory, interval, jobs==1, progout, post_clean))
+  
         for idx, f in enumerate(as_completed(futures)):
-            file, max_mem, delta = f.result()
-            rp = os.path.relpath(file, os.getcwd())
-            writer.writerow([rp, max_mem, delta.total_seconds()])
-            outstr.flush()
-            if jobs > 1:
-              perc = (idx+1) / len(futures) * 100
-              cur = str(idx+1).rjust(math.ceil(math.log10(len(futures))))
-              progout.write(f"[{cur}/{len(futures)}, {perc:5.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
-              progout.flush()
-      finally:
-        if outstr != sys.stdout:
-          outstr.close()
-    except KeyboardInterrupt:
-      print("Ctrl+C")
-      for f in futures:
-          f.cancel()
-      ex.shutdown()
+          file, max_mem, delta = f.result()
+          rp = os.path.relpath(file, os.getcwd())
+          writer.writerow([rp, max_mem, delta.total_seconds()])
+          outstr.flush()
+          if jobs > 1:
+            perc = (idx+1) / len(futures) * 100
+            cur = str(idx+1).rjust(math.ceil(math.log10(len(futures))))
+            progout.write(f"[{cur}/{len(futures)}, {perc:5.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
+            progout.flush()
+
+      except KeyboardInterrupt:
+        print("Ctrl+C")
+        for f in futures:
+            f.cancel()
+        ex.shutdown()
+  finally:
+    if outstr != sys.stdout:
+      outstr.close()
 
 @main.command("print")
 @click.argument("data_file", type=click.Path(dir_okay=False, exists=True))
