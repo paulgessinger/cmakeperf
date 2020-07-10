@@ -80,8 +80,8 @@ version = "0.8.7"
 widechars = ["wcwidth"]
 
 [metadata]
-content-hash = "f2a629da779afa13cbdae7e2dde7e979681cb28fdd90dd4a28c387763f095a1a"
-python-versions = "^3.8"
+content-hash = "58c9356055eefc02b0947116dcb4f5722a03d6f14d1fa496ed2b23eaa397ed9b"
+python-versions = "^3.7"
 
 [metadata.files]
 click = [

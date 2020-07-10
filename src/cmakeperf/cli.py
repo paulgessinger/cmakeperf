@@ -39,7 +39,7 @@ def run(command, file, directory, interval, progress, progout, post_clean):
     max_mem = max(mem, max_mem)
 
     delta = datetime.now() - start
-    if progress:
+    if progress and progout.isatty():
       progout.write(f"[{mem/1e6:8.2f}M, max: {max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\r")
       progout.flush()
     time.sleep(interval)
@@ -47,7 +47,7 @@ def run(command, file, directory, interval, progress, progout, post_clean):
   p.wait()
 
 
-  if progress:
+  if progress and progout.isatty():
     progout.write("\n")
 
   if post_clean:
@@ -67,7 +67,7 @@ def main():
 
 @main.command()
 @click.argument("compile_db", type=click.Path(dir_okay=False, exists=True))
-@click.option("--output", "-o", default="-", help="Output CSV to file, or stdout (use -)")
+@click.option("--output", "-o", help="Output CSV to file, or stdout (use -)")
 @click.option("--filter", default=".*", help="Filter input files by regex")
 @click.option("--interval", type=float, default=0.5, help="Sample interval")
 @click.option("--jobs", "-j", type=int, default=1)
@@ -80,16 +80,13 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
   with open(compile_db) as fh:
     commands = json.load(fh)
 
-  outstr = io.StringIO()
-  progout = sys.stdout
-
-  if output == "-":
-    if not sys.stdout.isatty():
-      outstr = sys.stdout
-      progout = sys.stderr
+  if not output:
+    outstr = io.StringIO()
   else:
     outstr = open(output, "w")
     print("I will write output to", output)
+
+  progout = sys.stdout
 
   writer = csv.writer(outstr, delimiter=',')
   writer.writerow(["file", "max_rss", "time"])
@@ -114,7 +111,7 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
           rp = os.path.relpath(file, os.getcwd())
           writer.writerow([rp, max_mem, delta.total_seconds()])
           outstr.flush()
-          if jobs > 1:
+          if jobs > 1 or not progout.isatty():
             perc = (idx+1) / len(futures) * 100
             cur = str(idx+1).rjust(math.ceil(math.log10(len(futures))))
             progout.write(f"[{cur}/{len(futures)}, {perc:5.1f}%] [{max_mem/1e6:8.2f}M] [{delta.total_seconds():8.2f}s] - {rp}\n")
