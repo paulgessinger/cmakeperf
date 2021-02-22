@@ -134,9 +134,17 @@ def fn_print(data_file):
   mem = df.sort_values(by="max_rss", ascending=False)
   time = df.sort_values(by="time", ascending=False)
 
-  print(tabulate([r for _, r in mem.head(10).iterrows()], headers=("file", "max_rss [M]", "time [s]"), floatfmt=("", ".2f", ".2f")))
+  print(tabulate(
+    [list(r) for _, r in mem.head(10).iterrows()], 
+    headers=("file", "max_rss [M]", "time [s]"), 
+    floatfmt=("", ".2f", ".2f")
+  ))
   print()
-  print(tabulate([r for _, r in time.head(10).iterrows()], headers=("file", "max_rss [M]", "time [s]"), floatfmt=("", ".2f", ".2f")))
+  print(tabulate(
+    [list(r) for _, r in time.head(10).iterrows()], 
+    headers=("file", "max_rss [M]", "time [s]"), 
+    floatfmt=("", ".2f", ".2f")
+  ))
 
 if "__main__" == __name__:
   main()
