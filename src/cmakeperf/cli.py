@@ -27,7 +27,7 @@ def run(command, file, directory, interval, progress, progout, post_clean):
   start = datetime.now()
 
   while p.status() in (psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING):
-    mem = 0
+    mem = p.memory_info().rss
     for subp in p.children(recursive=True):
       try:
         mem += subp.memory_info().rss
