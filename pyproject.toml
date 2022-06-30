@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cmakeperf"
-version = "0.1.0"
+version = "0.2.0"
 description = "Measure compilation performance from cmake compilation database"
 authors = ["Paul Gessinger <hello@paulgessinger.com>"]
 license = "MIT"
