@@ -17,6 +17,11 @@ dependencies = [
 [project.scripts]
 cmakeperf = "cmakeperf.cli:main"
 
+[tool.pyright]
+exclude = [ ".venv" ]
+venvPath = "."
+venv = ".venv"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
