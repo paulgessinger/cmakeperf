@@ -2,7 +2,7 @@
 import subprocess as sp
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import csv
 import json
 import os
@@ -10,15 +10,29 @@ import re
 import io
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+import shlex
+from pathlib import Path
 
 import click
 import psutil
 import pandas as pd
 from tabulate import tabulate
+from filelock import FileLock
 
 
-def run(command, file, directory, interval, progress, progout, post_clean):
+def run(
+    command,
+    file,
+    directory,
+    interval,
+    progress,
+    progout,
+    post_clean,
+    dry_run: bool = False,
+) -> tuple[str, float, timedelta]:
+    if dry_run:
+        return file, 0, timedelta(seconds=0)
+
     rp = os.path.relpath(file, os.getcwd())
 
     p = psutil.Popen(
@@ -77,7 +91,6 @@ def main():
 @click.option("--post-clean/--no-post-clean")
 def collect(compile_db, output, filter, interval, jobs, post_clean):
     regex = re.compile(filter)
-    cwd = os.getcwd()
 
     with open(compile_db) as fh:
         commands = json.load(fh)
@@ -165,6 +178,47 @@ def fn_print(data_file):
             floatfmt=("", ".2f", ".2f"),
         )
     )
+
+
+@main.command("intercept", context_settings=dict(ignore_unknown_options=True))
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def intercept(args):
+    command = shlex.join(args)
+    print(command)
+
+    file = args[-1]
+
+    output_csv = Path(
+        os.environ.get("CMAKEPERF_OUTPUT_CSV", Path.cwd() / "cmakeperf.csv")
+    )
+    lock_path = output_csv.with_suffix(".lock")
+
+    rp, max_mem, delta = run(
+        command, file, os.getcwd(), 0.5, False, sys.stdout, False, dry_run=False
+    )
+    print(max_mem, delta)
+
+    lock = FileLock(lock_path)
+
+    with lock:
+        exists = output_csv.exists()
+        with output_csv.open("a+") as fh:
+            writer = csv.writer(fh, delimiter=",")
+            if not exists:
+                writer.writerow(["file", "max_rss", "time"])
+            writer.writerow([rp, max_mem, delta.total_seconds()])
+
+
+# @main.command("intercept-ld", context_settings=dict(ignore_unknown_options=True))
+# @click.argument("args", nargs=-1, type=click.UNPROCESSED)
+# def intercept_ld(args):
+#     command = shlex.join(args)
+#     print(command)
+
+# file = args[-1]
+#
+# _, max_mem, delta = run(command, file, os.getcwd(), 0.5, False, sys.stdout, False)
+# print(max_mem, delta)
 
 
 if "__main__" == __name__:
