@@ -12,6 +12,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shlex
 from pathlib import Path
+from typing import Optional
 
 import click
 import psutil
@@ -104,7 +105,7 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
     progout = sys.stdout
 
     writer = csv.writer(outstr, delimiter=",")
-    writer.writerow(["file", "max_rss", "time"])
+    writer.writerow(["file", "max_rss", "time", "type"])
     outstr.flush()
 
     try:
@@ -135,7 +136,7 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
                 for idx, f in enumerate(as_completed(futures)):
                     file, max_mem, delta = f.result()
                     rp = os.path.relpath(file, os.getcwd())
-                    writer.writerow([rp, max_mem, delta.total_seconds()])
+                    writer.writerow([rp, max_mem, delta.total_seconds(), "compile"])
                     outstr.flush()
                     if jobs > 1 or not progout.isatty():
                         perc = (idx + 1) / len(futures) * 100
@@ -180,23 +181,14 @@ def fn_print(data_file):
     )
 
 
-@main.command("intercept", context_settings=dict(ignore_unknown_options=True))
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def intercept(args):
-    command = shlex.join(args)
-    print(command)
-
-    file = args[-1]
-
+def _run_intercept(*args, type: str, **kwargs):
     output_csv = Path(
         os.environ.get("CMAKEPERF_OUTPUT_CSV", Path.cwd() / "cmakeperf.csv")
     )
     lock_path = output_csv.with_suffix(".lock")
 
-    rp, max_mem, delta = run(
-        command, file, os.getcwd(), 0.5, False, sys.stdout, False, dry_run=False
-    )
-    print(max_mem, delta)
+    rp, max_mem, delta = run(*args, **kwargs)
+    # print(max_mem, delta)
 
     lock = FileLock(lock_path)
 
@@ -205,20 +197,56 @@ def intercept(args):
         with output_csv.open("a+") as fh:
             writer = csv.writer(fh, delimiter=",")
             if not exists:
-                writer.writerow(["file", "max_rss", "time"])
-            writer.writerow([rp, max_mem, delta.total_seconds()])
+                writer.writerow(["file", "max_rss", "time", "type"])
+            writer.writerow([rp, max_mem, delta.total_seconds(), type])
 
 
-# @main.command("intercept-ld", context_settings=dict(ignore_unknown_options=True))
-# @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-# def intercept_ld(args):
-#     command = shlex.join(args)
-#     print(command)
+@main.command("intercept", context_settings=dict(ignore_unknown_options=True))
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def intercept(args):
+    command = shlex.join(args)
+    # print(command)
 
-# file = args[-1]
-#
-# _, max_mem, delta = run(command, file, os.getcwd(), 0.5, False, sys.stdout, False)
-# print(max_mem, delta)
+    file = args[-1]
+
+    _run_intercept(
+        command,
+        file,
+        os.getcwd(),
+        0.5,
+        False,
+        sys.stdout,
+        False,
+        dry_run=False,
+        type="compile",
+    )
+
+
+@main.command("intercept-ld", context_settings=dict(ignore_unknown_options=True))
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def intercept_ld(args):
+    command = shlex.join(args)
+
+    file: Optional[str]
+    if sys.platform == "linux":
+        index = args.index("-o")
+        file = args[index + 1]
+    # print(command)
+    print(file)
+
+    assert file is not None
+
+    _run_intercept(
+        command,
+        file,
+        os.getcwd(),
+        0.5,
+        False,
+        sys.stdout,
+        False,
+        dry_run=False,
+        type="link",
+    )
 
 
 if "__main__" == __name__:
