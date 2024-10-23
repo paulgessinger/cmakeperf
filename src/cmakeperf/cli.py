@@ -227,10 +227,8 @@ def intercept(args):
 def intercept_ld(args):
     command = shlex.join(args)
 
-    file: Optional[str]
-    if sys.platform == "linux":
-        index = args.index("-o")
-        file = args[index + 1]
+    index = args.index("-o")
+    file = args[index + 1]
     # print(command)
     print(file)
 
