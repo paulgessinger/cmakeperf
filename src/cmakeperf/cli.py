@@ -12,7 +12,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shlex
 from pathlib import Path
-from typing import Optional
+from typing import TextIO
 
 import click
 import psutil
@@ -22,13 +22,14 @@ from filelock import FileLock
 
 
 def run(
-    command,
-    file,
-    directory,
-    interval,
-    progress,
-    progout,
-    post_clean,
+    command: str,
+    file: str,
+    *,
+    directory: str,
+    interval: float,
+    progress: bool,
+    progout: TextIO,
+    post_clean: bool,
     dry_run: bool = False,
 ) -> tuple[str, float, timedelta]:
     if dry_run:
@@ -102,7 +103,7 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
         outstr = open(output, "w")
         print("I will write output to", output)
 
-    progout = sys.stdout
+    progout: TextIO = sys.stdout
 
     writer = csv.writer(outstr, delimiter=",")
     writer.writerow(["file", "max_rss", "time", "type"])
@@ -125,11 +126,11 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
                             run,
                             command,
                             file,
-                            directory,
-                            interval,
-                            jobs == 1,
-                            progout,
-                            post_clean,
+                            directory=directory,
+                            interval=interval,
+                            progress=jobs == 1,
+                            progout=progout,
+                            post_clean=post_clean,
                         )
                     )
 
@@ -158,15 +159,30 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
 
 @main.command("print")
 @click.argument("data_file", type=click.Path(dir_okay=False, exists=True))
-def fn_print(data_file):
+@click.option("--number", "--n", "-n", default=10)
+@click.option("--filter", default=".*", help="Filter input files by regex")
+def fn_print(data_file, number, filter):
     df = pd.read_csv(data_file)
     df.max_rss /= 1e6
+
+    ex = re.compile(filter)
+    mask = [not ex.match(f) is not None for f in df.file]
+    df.drop(df[mask].index.tolist(), inplace=True)
+    filenames = df.file[df.type == "compile"]
+
+    prefix = os.path.commonprefix(list(filenames))
+    filenames = [f[len(prefix) :] for f in filenames]
+
+    df.loc[df.type == "compile", "file"] = filenames
+
+    df.drop(columns="type", inplace=True)
+
     mem = df.sort_values(by="max_rss", ascending=False)
     time = df.sort_values(by="time", ascending=False)
 
     print(
         tabulate(
-            [list(r) for _, r in mem.head(10).iterrows()],
+            [list(r) for _, r in mem.head(number).iterrows()],
             headers=("file", "max_rss [M]", "time [s]"),
             floatfmt=("", ".2f", ".2f"),
         )
@@ -174,7 +190,7 @@ def fn_print(data_file):
     print()
     print(
         tabulate(
-            [list(r) for _, r in time.head(10).iterrows()],
+            [list(r) for _, r in time.head(number).iterrows()],
             headers=("file", "max_rss [M]", "time [s]"),
             floatfmt=("", ".2f", ".2f"),
         )
@@ -187,7 +203,9 @@ def _run_intercept(*args, type: str, **kwargs):
     )
     lock_path = output_csv.with_suffix(".lock")
 
-    rp, max_mem, delta = run(*args, **kwargs)
+    interval = float(os.environ.get("CMAKEPERF_INTERVAL", kwargs.pop("interval", 0.5)))
+
+    rp, max_mem, delta = run(*args, interval=interval, **kwargs)
     # print(max_mem, delta)
 
     lock = FileLock(lock_path)
@@ -212,11 +230,10 @@ def intercept(args):
     _run_intercept(
         command,
         file,
-        os.getcwd(),
-        0.5,
-        False,
-        sys.stdout,
-        False,
+        directory=os.getcwd(),
+        progress=False,
+        progout=sys.stdout,
+        post_clean=False,
         dry_run=False,
         type="compile",
     )
@@ -230,18 +247,17 @@ def intercept_ld(args):
     index = args.index("-o")
     file = args[index + 1]
     # print(command)
-    print(file)
+    # print(file)
 
     assert file is not None
 
     _run_intercept(
         command,
         file,
-        os.getcwd(),
-        0.5,
-        False,
-        sys.stdout,
-        False,
+        directory=os.getcwd(),
+        progress=False,
+        progout=sys.stdout,
+        post_clean=False,
         dry_run=False,
         type="link",
     )
