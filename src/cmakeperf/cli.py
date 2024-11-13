@@ -12,9 +12,11 @@ import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shlex
 from pathlib import Path
-from typing import TextIO
+import contextlib
+from typing import TextIO, Annotated, Callable
+import functools
 
-import click
+import typer
 import psutil
 import pandas as pd
 from tabulate import tabulate
@@ -79,37 +81,54 @@ def run(
     return file, max_mem, delta
 
 
-@click.group()
-def main():
-    pass
+app = typer.Typer()
 
 
-@main.command()
-@click.argument("compile_db", type=click.Path(dir_okay=False, exists=True))
-@click.option("--output", "-o", help="Output CSV to file, or stdout (use -)")
-@click.option("--filter", default=".*", help="Filter input files by regex")
-@click.option("--interval", type=float, default=0.5, help="Sample interval")
-@click.option("--jobs", "-j", type=int, default=1)
-@click.option("--post-clean/--no-post-clean")
-def collect(compile_db, output, filter, interval, jobs, post_clean):
-    regex = re.compile(filter)
+@app.command()
+def collect(
+    compile_db: Annotated[
+        typer.FileText, typer.Argument(help="Path to compile_commands.json")
+    ],
+    output: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Output CSV file, use - for stdout"),
+    ] = None,
+    filter: Annotated[
+        str, typer.Option(help="Regular expression to select compilation units to run")
+    ] = ".*",
+    exclude: Annotated[
+        str, typer.Option(help="Regular expression to remove compilation units to run")
+    ] = "$^",
+    interval: Annotated[
+        float, typer.Option(help="Sampling interval to collect memory usage at")
+    ] = 0.5,
+    jobs: Annotated[int, typer.Option(help="Number of concurrent jobs to run")] = 1,
+    post_clean: Annotated[
+        bool, typer.Option(help="Clean up after the compilation")
+    ] = False,
+):
+    filter_ex = re.compile(filter)
+    exclude_ex = re.compile(exclude)
 
-    with open(compile_db) as fh:
-        commands = json.load(fh)
+    commands = json.load(compile_db)
 
-    if not output:
-        outstr = io.StringIO()
-    else:
-        outstr = open(output, "w")
-        print("I will write output to", output)
+    with contextlib.ExitStack() as stack:
+        out_fh = io.StringIO()  # we will throw this away
+        progout: TextIO = sys.stdout  # default to stderr so we can pipe it
+        if output is not None:
+            if output == "-":
+                out_fh = sys.stdout
+                progout = sys.stderr
+            else:
+                p = Path(output)
+                if p.is_dir():
+                    raise ValueError(f"Output {output} is a directory")
+                out_fh = stack.enter_context(p.open("w"))
 
-    progout: TextIO = sys.stdout
+        writer = csv.writer(out_fh, delimiter=",")
 
-    writer = csv.writer(outstr, delimiter=",")
-    writer.writerow(["file", "max_rss", "time", "type"])
-    outstr.flush()
+        writer.writerow(["file", "max_rss", "time", "type"])
 
-    try:
         with ThreadPoolExecutor(jobs) as ex:
             futures = []
             try:
@@ -118,7 +137,10 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
                     file = item["file"]
                     directory = item["directory"]
 
-                    if not regex.match(file):
+                    if not filter_ex.match(file):
+                        continue
+
+                    if exclude_ex.match(file):
                         continue
 
                     futures.append(
@@ -138,7 +160,6 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
                     file, max_mem, delta = f.result()
                     rp = os.path.relpath(file, os.getcwd())
                     writer.writerow([rp, max_mem, delta.total_seconds(), "compile"])
-                    outstr.flush()
                     if jobs > 1 or not progout.isatty():
                         perc = (idx + 1) / len(futures) * 100
                         cur = str(idx + 1).rjust(math.ceil(math.log10(len(futures))))
@@ -152,26 +173,38 @@ def collect(compile_db, output, filter, interval, jobs, post_clean):
                 for f in futures:
                     f.cancel()
                 ex.shutdown()
-    finally:
-        if outstr != sys.stdout:
-            outstr.close()
 
 
-@main.command("print")
-@click.argument("data_file", type=click.Path(dir_okay=False, exists=True))
-@click.option("--number", "--n", "-n", default=10)
-@click.option("--filter", default=".*", help="Filter input files by regex")
-def fn_print(data_file, number, filter):
+@app.command("print")
+def fn_print(
+    data_file: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            help="Input CSV file that was written by cmakeperf",
+        ),
+    ],
+    number: Annotated[int, typer.Option(help="Number of entries to show")] = 10,
+    filter: Annotated[str, typer.Option(help="Filter input files by regex")] = ".*",
+    exclude: Annotated[str, typer.Option(help="Exclude input files by regex")] = "$^",
+):
     df = pd.read_csv(data_file)
     df.max_rss /= 1e6
 
-    ex = re.compile(filter)
-    mask = [not ex.match(f) is not None for f in df.file]
+    filter_ex = re.compile(filter)
+    exclude_ex = re.compile(exclude)
+    mask = [
+        filter_ex.match(f) is None or exclude_ex.match(f) is not None for f in df.file
+    ]
     df.drop(df[mask].index.tolist(), inplace=True)
     filenames = df.file[df.type == "compile"]
 
-    prefix = os.path.commonprefix(list(filenames))
-    filenames = [f[len(prefix) :] for f in filenames]
+    if len(filenames) == 1:
+        filenames = [os.path.basename(filenames.iloc[0])]
+    else:
+        prefix = os.path.commonprefix(list(filenames))
+        filenames = [f[len(prefix) :] if f != prefix else f for f in filenames]
 
     df.loc[df.type == "compile", "file"] = filenames
 
@@ -206,7 +239,6 @@ def _run_intercept(*args, type: str, **kwargs):
     interval = float(os.environ.get("CMAKEPERF_INTERVAL", kwargs.pop("interval", 0.5)))
 
     rp, max_mem, delta = run(*args, interval=interval, **kwargs)
-    # print(max_mem, delta)
 
     lock = FileLock(lock_path)
 
@@ -219,11 +251,23 @@ def _run_intercept(*args, type: str, **kwargs):
             writer.writerow([rp, max_mem, delta.total_seconds(), type])
 
 
-@main.command("intercept", context_settings=dict(ignore_unknown_options=True))
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def intercept(args):
+def with_args(func: Callable[[list[str]], None]):
+    @functools.wraps(func)
+    def wrapper():
+        args = sys.argv[1:]
+        if len(args) == 1 and args[0] in ("-h", "--help"):
+            print(
+                f"Usage: {os.path.basename(sys.argv[0])} <compiler or linker command>"
+            )
+            return
+        return func(args)
+
+    return wrapper
+
+
+@with_args
+def intercept(args: list[str]):
     command = shlex.join(args)
-    # print(command)
 
     file = args[-1]
 
@@ -239,15 +283,12 @@ def intercept(args):
     )
 
 
-@main.command("intercept-ld", context_settings=dict(ignore_unknown_options=True))
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def intercept_ld(args):
+@with_args
+def intercept_ld(args: list[str]):
     command = shlex.join(args)
 
     index = args.index("-o")
     file = args[index + 1]
-    # print(command)
-    # print(file)
 
     assert file is not None
 
@@ -261,7 +302,3 @@ def intercept_ld(args):
         dry_run=False,
         type="link",
     )
-
-
-if "__main__" == __name__:
-    main()

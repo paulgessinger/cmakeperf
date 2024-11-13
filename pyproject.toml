@@ -1,22 +1,23 @@
 [project]
 name = "cmakeperf"
-version = "0.5.0"
-description = "Measure compilation performance from cmake compilation database"
+version = "0.6.0"
+description = "Measure compilation performance with CMake"
 authors = [{name="Paul Gessinger", email="hello@paulgessinger.com"}]
 license = "MIT"
 
 requires-python = ">=3.10"
 dependencies = [
-    "click>=8.1.7",
     "filelock>=3.16.1",
     "numpy>=2.1.2",
     "pandas>=2.2.3",
     "psutil>=6.1.0",
+    "rich>=13.9.4",
     "tabulate>=0.9.0",
+    "typer>=0.13.0",
 ]
 
 [project.scripts]
-cmakeperf = "cmakeperf.cli:main"
+cmakeperf = "cmakeperf.cli:app"
 cmakeperf-intercept = "cmakeperf.cli:intercept"
 cmakeperf-intercept-ld = "cmakeperf.cli:intercept_ld"
 
@@ -24,6 +25,11 @@ cmakeperf-intercept-ld = "cmakeperf.cli:intercept_ld"
 exclude = [ ".venv" ]
 venvPath = "."
 venv = ".venv"
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.7.3",
+]
 
 [build-system]
 requires = ["hatchling"]
