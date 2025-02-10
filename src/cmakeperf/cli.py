@@ -47,7 +47,12 @@ def run(
     start = datetime.now()
 
     while p.status() in (psutil.STATUS_RUNNING, psutil.STATUS_SLEEPING):
-        mem = p.memory_info().rss
+        mem = 0
+        try:
+            mem += p.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
         for subp in p.children(recursive=True):
             try:
                 mem += subp.memory_info().rss
@@ -185,7 +190,9 @@ def fn_print(
             help="Input CSV file that was written by cmakeperf",
         ),
     ],
-    number: Annotated[int, typer.Option(help="Number of entries to show")] = 10,
+    number: Annotated[
+        int, typer.Option("--number", "-n", help="Number of entries to show")
+    ] = 10,
     filter: Annotated[str, typer.Option(help="Filter input files by regex")] = ".*",
     exclude: Annotated[str, typer.Option(help="Exclude input files by regex")] = "$^",
 ):
