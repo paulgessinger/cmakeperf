@@ -1,6 +1,6 @@
 [project]
 name = "cmakeperf"
-version = "0.6.0"
+version = "0.6.1"
 description = "Measure compilation performance with CMake"
 authors = [{name="Paul Gessinger", email="hello@paulgessinger.com"}]
 license = "MIT"
