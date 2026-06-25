@@ -26,8 +26,8 @@ exclude = [ ".venv" ]
 venvPath = "."
 venv = ".venv"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "ruff>=0.7.3",
 ]
 
